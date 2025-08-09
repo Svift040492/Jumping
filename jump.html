@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8" />
+<title>Суперточный счётчик прыжков</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+body { font-family: sans-serif; padding: 20px; }
+#count { font-size: 48px; font-weight: bold; margin-top: 10px; }
+button { padding: 10px 16px; margin-right: 8px; }
+</style>
+<h1>Суперточный счётчик прыжков</h1>
+<button id="start">Start</button>
+<button id="stop" disabled>Stop</button>
+<div id="status">Статус: Ожидание</div>
+<div id="count">0</div>
+
+<script>
+(() => {
+  const GRAVITY = 9.81;
+  const TAKEOFF_THRESHOLD = 15.0; // ускорение вверх для старта прыжка
+  const ZERO_G_THRESHOLD = 3.0;   // модуль ускорения в полёте (м/с²)
+  const LANDING_THRESHOLD = 18.0; // удар при приземлении
+  const MIN_JUMP_TIME = 400;      // мс минимальная длительность прыжка
+  const MAX_JUMP_TIME = 2000;     // мс максимальная длительность прыжка
+
+  let jumpCount = 0;
+  let listening = false;
+  let state = "GROUND";
+  let lastTakeoffTime = 0;
+
+  let gravityEstimate = { x:0, y:0, z:GRAVITY };
+  const alpha = 0.9;
+
+  const countEl = document.getElementById("count");
+  const statusEl = document.getElementById("status");
+
+  function setStatus(s){ statusEl.textContent = "Статус: " + s; }
+
+  function processAccel(ax, ay, az) {
+    // фильтруем гравитацию
+    gravityEstimate.x = alpha * gravityEstimate.x + (1 - alpha) * ax;
+    gravityEstimate.y = alpha * gravityEstimate.y + (1 - alpha) * ay;
+    gravityEstimate.z = alpha * gravityEstimate.z + (1 - alpha) * az;
+
+    const linx = ax - gravityEstimate.x;
+    const liny = ay - gravityEstimate.y;
+    const linz = az - gravityEstimate.z;
+
+    const magnitude = Math.sqrt(linx*linx + liny*liny + linz*linz);
+
+    const now = Date.now();
+
+    switch(state) {
+      case "GROUND":
+        if (magnitude > TAKEOFF_THRESHOLD) {
+          state = "TAKEOFF";
+          lastTakeoffTime = now;
+          setStatus("Прыжок: взлёт");
+        }
+        break;
+      case "TAKEOFF":
+        if (magnitude < ZERO_G_THRESHOLD) {
+          state = "AIRBORNE";
+          setStatus("Прыжок: в воздухе");
+        }
+        break;
+      case "AIRBORNE":
+        if (magnitude > LANDING_THRESHOLD) {
+          const jumpTime = now - lastTakeoffTime;
+          if (jumpTime >= MIN_JUMP_TIME && jumpTime <= MAX_JUMP_TIME) {
+            jumpCount++;
+            countEl.textContent = jumpCount;
+            setStatus(`Прыжок засчитан (${jumpTime} мс)`);
+          }
+          state = "GROUND";
+        }
+        break;
+    }
+  }
+
+  function startSensors() {
+    if (typeof DeviceMotionEvent !== "undefined" &&
+        typeof DeviceMotionEvent.requestPermission === "function") {
+      DeviceMotionEvent.requestPermission().then(response => {
+        if (response === "granted") {
+          window.addEventListener("devicemotion", motionHandler);
+          listening = true;
+        } else {
+          setStatus("Доступ к датчикам отклонён");
+        }
+      });
+    } else {
+      window.addEventListener("devicemotion", motionHandler);
+      listening = true;
+    }
+  }
+
+  function motionHandler(e) {
+    let ax = e.accelerationIncludingGravity.x;
+    let ay = e.accelerationIncludingGravity.y;
+    let az = e.accelerationIncludingGravity.z;
+    processAccel(ax, ay, az);
+  }
+
+  function stopSensors() {
+    window.removeEventListener("devicemotion", motionHandler);
+    listening = false;
+  }
+
+  document.getElementById("start").addEventListener("click", () => {
+    if (!listening) {
+      jumpCount = 0;
+      countEl.textContent = jumpCount;
+      state = "GROUND";
+      startSensors();
+      setStatus("Счётчик запущен");
+      document.getElementById("start").disabled = true;
+      document.getElementById("stop").disabled = false;
+    }
+  });
+
+  document.getElementById("stop").addEventListener("click", () => {
+    stopSensors();
+    setStatus("Остановлено");
+    document.getElementById("start").disabled = false;
+    document.getElementById("stop").disabled = true;
+  });
+})();
+</script>
